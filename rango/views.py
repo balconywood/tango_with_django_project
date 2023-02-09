@@ -3,6 +3,7 @@ from django.shortcuts import render, redirect
 from django.urls import reverse
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
+from datetime import datetime
 from rango.models import Category, Page
 from rango.forms import CategoryForm, PageForm, UserForm, UserProfileForm
 
@@ -12,6 +13,9 @@ def index(request):
     # Retrieve the top 5 most viewed pages from database
     top_page_list = Page.objects.order_by('-views')[:5]
 
+    # Call the helper function to handle the visit counter cookies
+    visitor_cookie_handler(request)
+
     context_dict = {
         'boldmessage': 'Crunchy, creamy, cookie, candy, cupcake!',
         'categories': top_category_list,
@@ -19,14 +23,48 @@ def index(request):
     }
     return render(request, 'rango/index.html', context=context_dict)
 
-def about(request):
-    # Construct a dictionary to pass to the template engine as its context.
-    # Note the key boldmessage matches to {{ boldmessage }} in the template!
-    context_dict = {'boldmessage': 'This tutorial has been put together by David Cannon'}
+def get_server_side_cookie(request, cookie, default_val=None):
+    val = request.session.get(cookie)
+    if not val:
+        val = default_val
+    return val
+def visitor_cookie_handler(request):
+    # Get the number of visits to the site.
+    # If the cookie is in the session data, we cast the value returned
+    # to an integer.
+    # If not, the default value of 1 is used.
+    visits = int(get_server_side_cookie(request, 'visits', '1'))
 
-    # Return a rendered response to send to the client.
-    # We make use of the shortcut function to make our lives easier.
-    # Note that the first parameter is the template we wish to use.
+    # Get the last visit date/time.
+    # If the cookie is in the session data, we parse the date/time string
+    # to a Python datetime object, stored in the variable last_visit_time,
+    # so we can use it in the comparison below.
+    # If not, we use the current date and time as a default value.
+    last_visit_cookie = get_server_side_cookie(request,
+                                               'last_visit',
+                                               str(datetime.now()))
+    last_visit_time = datetime.strptime(last_visit_cookie[:-7],
+                                        '%Y-%m-%d %H:%M:%S')
+    # If it's been more than a day since the last visit
+    if (datetime.now() - last_visit_time).days > 0:
+        visits = visits + 1
+        # Update the last visit cookie now we have incremented the count
+        request.session['last_visit'] = str(datetime.now())
+    else:
+        # Set the last visit cookie
+        request.session['last_visit'] = last_visit_cookie
+
+    # Update or set the visits cookie
+    request.session['visits'] = visits
+
+def about(request):
+    # Call the helper function to handle the visit counter cookies
+    visitor_cookie_handler(request)
+
+    context_dict = {
+        'boldmessage': 'This tutorial has been put together by David Cannon',
+        'visits': int(request.session['visits']),
+    }
     return render(request, 'rango/about.html', context=context_dict)
 
 def show_category(request, category_name_slug):
