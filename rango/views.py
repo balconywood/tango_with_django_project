@@ -1,7 +1,10 @@
+from django.http import HttpResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
 from rango.models import Category, Page
-from rango.forms import CategoryForm, PageForm
+from rango.forms import CategoryForm, PageForm, UserForm, UserProfileForm
 
 def index(request):
     # Retrieve the top 5 most liked categories from database
@@ -44,6 +47,7 @@ def show_category(request, category_name_slug):
 
     return render(request, 'rango/category.html', context=context_dict)
 
+@login_required
 def add_category(request):
     form = CategoryForm()
 
@@ -68,6 +72,7 @@ def add_category(request):
     # Render the form with error messages, if any.
     return render(request, 'rango/add_category.html', {'form': form})
 
+@login_required
 def add_page(request, category_name_slug):
     try:
         # Query database for category with given slug
@@ -108,3 +113,118 @@ def add_page(request, category_name_slug):
 
     context_dict = {'form': form, 'category': category}
     return render(request, 'rango/add_page.html', context=context_dict)
+
+def register(request):
+    # A boolean flag for keeping track of if the registration was
+    # successful. Initially False, set to true when we successfully
+    # register the user
+    registered = False
+
+    # If we received an HTTP POST request, we're interested in
+    # processing form data.
+    if request.method == 'POST':
+        # Attempt to get information from the raw form information.
+        # Note that we make use of both UserForm and UserProfileForm.
+        user_form = UserForm(request.POST)
+        profile_form = UserProfileForm(request.POST)
+
+        # If both forms are valid
+        if user_form.is_valid() and profile_form.is_valid():
+            # Save the user's form data to the database.
+            user = user_form.save()
+            # We hash the password with the set_password method.
+            # Once hashed, we can update the user object.
+            user.set_password(user.password)
+            user.save()
+
+            # Now we can deal with the UserProfile instance.
+            # Since we need to set the user attribute ourselves,
+            # we set commit=False. This delays saving the model
+            # until we're ready to avoid integrity problems.
+            profile = profile_form.save(commit=False)
+            profile.user = user
+
+            # If the user provided a profile picture, we get it from
+            # the input form and put it in the UserProfile model.
+            if 'picture' in request.FILES:
+                profile.picture = request.FILES['picture']
+
+            # Now we can save the UserProfile model instance
+            profile.save()
+
+            # Update our flag to indicate the template registration
+            # was successful.
+            registered = True
+        else:
+            # Invalid form or forms - may include mistakes.
+            # Print problems to the terminal.
+            print(user_form.errors, profile_form.errors)
+    else:
+        # Not a HTTP POST request, so render our form using two
+        # ModelForm instances. The forms will be blank, ready for
+        # user input.
+        user_form = UserForm()
+        profile_form = UserProfileForm()
+
+    # Render the template depending on the context.
+    context_dict = {'user_form': user_form,
+                    'profile_form': profile_form,
+                    'registered': registered}
+    return render(request, 'rango/register.html', context=context_dict)
+
+def user_login(request):
+    # If we received an HTTP POST request, try to pull out the relevant
+    # information
+    if request.method == 'POST':
+        # Get the username and password provided by the user. This
+        # information is obtained from the login form. We use
+        # request.POST.get('<variable>') instead of
+        # request.POST['<variable>'] since the former returns None
+        # if the value does not exist, while the latter raises a
+        # KeyError exception.
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+
+        # Use Django's machinery to attempt to see if the username/
+        # password combination is valid - a User object is returned if
+        # it is.
+        user = authenticate(username=username, password=password)
+
+        # If we have a User object, the details are correct.
+        # If None (Python's way of representing the absense of a value),
+        # no user with matching credentials was found.
+        if user:
+            # Check the account is active and is not disabled.
+            if user.is_active:
+                # If the account is valid and active, we can log the user
+                # in. We'll send the user back to the homepage.
+                login(request, user)
+                return redirect(reverse('rango:index'))
+            else:
+                # An inactive account was used - we won't log the user in.
+                return HttpResponse("Your Rango account is disabled.")
+        else:
+            # Bad login details were provided, so we can't log the user in.
+            print(f"Invalid login details: {username}, {password}")
+            return HttpResponse("Invalid login details supplied.")
+    # The request is not an HTTP POST, so display the login form.
+    # This scenario would most likely be an HTTP GET.
+    else:
+        # No context variables to pass to the tamplate system here,
+        # hence the blank dictionary object
+        return render(request, 'rango/login.html')
+
+# Use the login_required() decorator to ensure only those logged in can
+# access the view.
+@login_required
+def restricted(request):
+    return render(request, 'rango/restricted.html')
+
+# Use the login_required() decorator to ensure only those logged in can
+# access the view.
+@login_required
+def user_logout(request):
+    # Since we know the user is logged in, we can now just log them out.
+    logout(request)
+    # Redirect the user back to the homepage.
+    return redirect(reverse('rango:index'))
